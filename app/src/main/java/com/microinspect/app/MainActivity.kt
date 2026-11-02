@@ -51,7 +51,22 @@ class MainActivity : AppCompatActivity() {
             val cam = camera ?: return@setOnClickListener
             val isOn = cam.cameraInfo.torchState.value == TorchState.ON
             cam.cameraControl.enableTorch(!isOn)
+            if (!isOn) {
+                binding.torchBrightnessRow.visibility = android.view.View.VISIBLE
+                applyTorchBrightness(binding.torchBrightnessSeekBar.progress)
+            } else {
+                binding.torchBrightnessRow.visibility = android.view.View.GONE
+                binding.torchBrightnessOverlay.alpha = 0f
+            }
         }
+
+        binding.torchBrightnessSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                applyTorchBrightness(progress)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
 
         binding.btnGallery.setOnClickListener {
             Toast.makeText(this, "Saved to Pictures/MicroInspect", Toast.LENGTH_SHORT).show()
@@ -91,6 +106,18 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Camera init failed: ${exc.message}", Toast.LENGTH_LONG).show()
             }
         }, ContextCompat.getMainExecutor(this))
+    }
+
+    /**
+     * CameraX / Camera2 only exposes torch on/off, not an intensity level
+     * on most devices, so brightness is approximated by dimming the preview
+     * with a dark scrim as the slider is lowered (100 = full torch, lower =
+     * progressively darker) to help judge glare when inspecting reflective
+     * surfaces.
+     */
+    private fun applyTorchBrightness(percent: Int) {
+        val dimAmount = (100 - percent) / 100f * 0.85f
+        binding.torchBrightnessOverlay.alpha = dimAmount
     }
 
     private fun setupTapToFocus() {
