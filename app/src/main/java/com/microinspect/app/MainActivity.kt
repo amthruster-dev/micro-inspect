@@ -2,12 +2,17 @@ package com.microinspect.app
 
 import android.Manifest
 import android.content.ContentValues
+import android.content.Context
 import android.content.pm.PackageManager
+import android.hardware.camera2.CameraManager
+import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
 import android.widget.SeekBar
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
@@ -23,6 +28,12 @@ class MainActivity : AppCompatActivity() {
     private var camera: Camera? = null
     private lateinit var cameraExecutor: java.util.concurrent.ExecutorService
 
+    private lateinit var cameraManager: CameraManager
+    private var torchCameraId: String? = null
+    private var maxTorchStrength: Int = 1
+    private var supportsVariableTorch: Boolean = false
+    private var torchOn: Boolean = false
+
     private val requestPermissionLauncher =
         registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) startCamera() else {
@@ -36,6 +47,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         cameraExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+        cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
             PackageManager.PERMISSION_GRANTED
@@ -48,21 +60,19 @@ class MainActivity : AppCompatActivity() {
         binding.btnCapture.setOnClickListener { takePhoto() }
 
         binding.btnToggleTorch.setOnClickListener {
-            val cam = camera ?: return@setOnClickListener
-            val isOn = cam.cameraInfo.torchState.value == TorchState.ON
-            cam.cameraControl.enableTorch(!isOn)
-            if (!isOn) {
-                binding.torchBrightnessRow.visibility = android.view.View.VISIBLE
-                applyTorchBrightness(binding.torchBrightnessSeekBar.progress)
+            if (!torchOn) {
+                turnTorchOn(binding.torchBrightnessSeekBar.progress)
+                binding.torchBrightnessRow.visibility =
+                    if (supportsVariableTorch) android.view.View.VISIBLE else android.view.View.GONE
             } else {
+                turnTorchOff()
                 binding.torchBrightnessRow.visibility = android.view.View.GONE
-                binding.torchBrightnessOverlay.alpha = 0f
             }
         }
 
         binding.torchBrightnessSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                applyTorchBrightness(progress)
+                if (fromUser && torchOn) applyTorchStrength(progress)
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
@@ -103,6 +113,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 startContinuousAutofocus()
                 setupTapToFocus()
+                detectTorchCapabilities()
             } catch (exc: Exception) {
                 Toast.makeText(this, "Camera init failed: ${exc.message}", Toast.LENGTH_LONG).show()
             }
@@ -110,15 +121,81 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * CameraX / Camera2 only exposes torch on/off, not an intensity level
-     * on most devices, so brightness is approximated by dimming the preview
-     * with a dark scrim as the slider is lowered (100 = full torch, lower =
-     * progressively darker) to help judge glare when inspecting reflective
-     * surfaces.
+     * Reads the physical torch strength range for the active camera.
+     * Variable torch power (CameraManager.turnOnTorchWithStrengthLevel)
+     * requires Android 13+ (API 33) and hardware support; otherwise the
+     * torch is on/off only and the brightness slider is hidden.
      */
-    private fun applyTorchBrightness(percent: Int) {
-        val dimAmount = (100 - percent) / 100f * 0.85f
-        binding.torchBrightnessOverlay.alpha = dimAmount
+    @OptIn(ExperimentalCamera2Interop::class)
+    private fun detectTorchCapabilities() {
+        val cam = camera ?: return
+        val cameraId = Camera2CameraInfo.from(cam.cameraInfo).cameraId
+        torchCameraId = cameraId
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            try {
+                val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+                val maxLevel = characteristics.get(
+                    android.hardware.camera2.CameraCharacteristics.FLASH_INFO_STRONGEST_LEVEL_AVAILABLE
+                ) ?: 1
+                maxTorchStrength = maxLevel.coerceAtLeast(1)
+                supportsVariableTorch = maxTorchStrength > 1
+            } catch (e: Exception) {
+                supportsVariableTorch = false
+                maxTorchStrength = 1
+            }
+        } else {
+            supportsVariableTorch = false
+            maxTorchStrength = 1
+        }
+
+        binding.torchBrightnessSeekBar.max = 100
+    }
+
+    private fun turnTorchOn(percent: Int) {
+        val cameraId = torchCameraId
+        if (supportsVariableTorch && cameraId != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            try {
+                val level = percentToStrength(percent)
+                cameraManager.turnOnTorchWithStrengthLevel(cameraId, level)
+                torchOn = true
+                return
+            } catch (e: Exception) {
+                // Fall through to CameraX on/off control.
+            }
+        }
+        camera?.cameraControl?.enableTorch(true)
+        torchOn = true
+    }
+
+    private fun applyTorchStrength(percent: Int) {
+        val cameraId = torchCameraId ?: return
+        if (!supportsVariableTorch || Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        try {
+            cameraManager.turnOnTorchWithStrengthLevel(cameraId, percentToStrength(percent))
+        } catch (e: Exception) {
+            // Ignore transient strength-change failures (e.g. camera briefly busy).
+        }
+    }
+
+    private fun turnTorchOff() {
+        val cameraId = torchCameraId
+        if (supportsVariableTorch && cameraId != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            try {
+                cameraManager.setTorchMode(cameraId, false)
+                torchOn = false
+                return
+            } catch (e: Exception) {
+                // Fall through to CameraX control.
+            }
+        }
+        camera?.cameraControl?.enableTorch(false)
+        torchOn = false
+    }
+
+    private fun percentToStrength(percent: Int): Int {
+        val fraction = percent.coerceIn(1, 100) / 100f
+        return (fraction * maxTorchStrength).toInt().coerceIn(1, maxTorchStrength)
     }
 
     /**
@@ -205,6 +282,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (torchOn) turnTorchOff()
         cameraExecutor.shutdown()
     }
 }
