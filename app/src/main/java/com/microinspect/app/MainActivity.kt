@@ -101,6 +101,7 @@ class MainActivity : AppCompatActivity() {
                 camera = cameraProvider.bindToLifecycle(
                     this, cameraSelector, preview, imageCapture
                 )
+                startContinuousAutofocus()
                 setupTapToFocus()
             } catch (exc: Exception) {
                 Toast.makeText(this, "Camera init failed: ${exc.message}", Toast.LENGTH_LONG).show()
@@ -120,18 +121,49 @@ class MainActivity : AppCompatActivity() {
         binding.torchBrightnessOverlay.alpha = dimAmount
     }
 
+    /**
+     * Kicks off continuous autofocus (like a DSLR's AF-C) centered on the
+     * crosshair so the lens keeps hunting focus on its own as the phone or
+     * the part moves, instead of locking after a single focus pass.
+     */
+    private fun startContinuousAutofocus() {
+        val previewView = binding.previewView
+        previewView.post {
+            val factory = previewView.meteringPointFactory
+            val centerPoint = factory.createPoint(previewView.width / 2f, previewView.height / 2f)
+
+            val action = FocusMeteringAction.Builder(
+                centerPoint,
+                FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
+            )
+                // No auto-cancel: keep refocusing continuously rather than locking.
+                .disableAutoCancel()
+                .build()
+
+            camera?.cameraControl?.startFocusAndMetering(action)
+            binding.statusText.text = "Continuous autofocus active"
+        }
+    }
+
     private fun setupTapToFocus() {
         binding.previewView.setOnTouchListener { view, event ->
             if (event.action == android.view.MotionEvent.ACTION_UP) {
                 val factory = binding.previewView.meteringPointFactory
                 val point = factory.createPoint(event.x, event.y)
+                // Tap pins focus/exposure on a specific defect for a few
+                // seconds, then falls back to continuous autofocus again.
                 val action = FocusMeteringAction.Builder(
                     point,
                     FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
                 ).setAutoCancelDuration(4, java.util.concurrent.TimeUnit.SECONDS).build()
 
-                camera?.cameraControl?.startFocusAndMetering(action)
+                val future = camera?.cameraControl?.startFocusAndMetering(action)
                 binding.statusText.text = "Focusing on surface point…"
+
+                future?.addListener({
+                    binding.statusText.text = "Continuous autofocus active"
+                }, ContextCompat.getMainExecutor(this))
+
                 view.performClick()
             }
             true
