@@ -136,7 +136,7 @@ class MainActivity : AppCompatActivity() {
             try {
                 val characteristics = cameraManager.getCameraCharacteristics(cameraId)
                 val maxLevel = characteristics.get(
-                    android.hardware.camera2.CameraCharacteristics.FLASH_INFO_STRONGEST_LEVEL_AVAILABLE
+                    android.hardware.camera2.CameraCharacteristics.FLASH_INFO_STRENGTH_MAXIMUM_LEVEL
                 ) ?: 1
                 maxTorchStrength = maxLevel.coerceAtLeast(1)
                 supportsVariableTorch = maxTorchStrength > 1
