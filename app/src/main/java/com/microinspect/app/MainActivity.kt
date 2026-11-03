@@ -3,13 +3,17 @@ package com.microinspect.app
 import android.Manifest
 import android.content.ContentValues
 import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.hardware.camera2.CameraManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
+import android.text.InputType
+import android.widget.EditText
 import android.widget.SeekBar
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
@@ -34,6 +38,10 @@ class MainActivity : AppCompatActivity() {
     private var supportsVariableTorch: Boolean = false
     private var torchOn: Boolean = false
 
+    private lateinit var calibrationPrefs: SharedPreferences
+    private var currentZoomPercent: Int = 0
+    private var pendingCalibrationPixelDistance: Float = 0f
+
     private val requestPermissionLauncher =
         registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
             if (granted) startCamera() else {
@@ -48,6 +56,7 @@ class MainActivity : AppCompatActivity() {
 
         cameraExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
+        calibrationPrefs = getSharedPreferences("measure_calibration", Context.MODE_PRIVATE)
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) ==
             PackageManager.PERMISSION_GRANTED
@@ -85,10 +94,95 @@ class MainActivity : AppCompatActivity() {
         binding.zoomSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 camera?.cameraControl?.setLinearZoom(progress / 100f)
+                currentZoomPercent = progress
+                loadCalibrationForCurrentZoom()
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
+
+        binding.btnMeasure.setOnClickListener {
+            startCalibration()
+        }
+
+        binding.measureOverlayView.onCalibrationPointsChosen = { pixelDistance ->
+            pendingCalibrationPixelDistance = pixelDistance
+            promptForKnownLength()
+        }
+    }
+
+    /**
+     * Enters calibration mode: the ruled scale overlay is hidden and the
+     * user is asked to tap two points on an object of known length (a
+     * ruler, a coin, a reference card) placed under the lens.
+     */
+    private fun startCalibration() {
+        binding.measureOverlayView.calibrationMode = true
+        binding.calibrationBanner.visibility = android.view.View.VISIBLE
+        binding.calibrationBanner.text = "Tap two points on a known-length object"
+    }
+
+    private fun promptForKnownLength() {
+        val input = EditText(this).apply {
+            inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
+            hint = "Length in millimeters, e.g. 10"
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Known length")
+            .setMessage("Enter the real length of the span you just marked, in millimeters.")
+            .setView(input)
+            .setPositiveButton("Calibrate") { _, _ ->
+                val mm = input.text.toString().toFloatOrNull()
+                if (mm == null || mm <= 0f) {
+                    Toast.makeText(this, "Enter a valid length in mm", Toast.LENGTH_SHORT).show()
+                    cancelCalibration()
+                    return@setPositiveButton
+                }
+                val pxPerMm = pendingCalibrationPixelDistance / mm
+                saveCalibrationForCurrentZoom(pxPerMm)
+                finishCalibration(pxPerMm)
+            }
+            .setNegativeButton("Cancel") { _, _ -> cancelCalibration() }
+            .setCancelable(false)
+            .show()
+    }
+
+    private fun finishCalibration(pxPerMm: Float) {
+        binding.measureOverlayView.calibrationMode = false
+        binding.measureOverlayView.pixelsPerMm = pxPerMm
+        binding.calibrationBanner.visibility = android.view.View.GONE
+        binding.calibrationStatusText.text = "Calibrated: %.1f px/mm".format(pxPerMm)
+        Toast.makeText(this, "Calibrated. Ruled scale now shows real mm.", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun cancelCalibration() {
+        binding.measureOverlayView.calibrationMode = false
+        binding.calibrationBanner.visibility = android.view.View.GONE
+        loadCalibrationForCurrentZoom()
+    }
+
+    private fun calibrationKeyForZoom(): String = "pxPerMm_zoom_$currentZoomPercent"
+
+    private fun saveCalibrationForCurrentZoom(pxPerMm: Float) {
+        calibrationPrefs.edit().putFloat(calibrationKeyForZoom(), pxPerMm).apply()
+    }
+
+    /**
+     * Calibration is zoom-dependent (pixels-per-mm changes with zoom), so
+     * each zoom level keeps its own saved value. Switching zoom without a
+     * saved calibration for that level clears the ruled overlay and shows
+     * "Not calibrated" until the user recalibrates there.
+     */
+    private fun loadCalibrationForCurrentZoom() {
+        val saved = calibrationPrefs.getFloat(calibrationKeyForZoom(), -1f)
+        if (saved > 0f) {
+            binding.measureOverlayView.pixelsPerMm = saved
+            binding.calibrationStatusText.text = "Calibrated: %.1f px/mm".format(saved)
+        } else {
+            binding.measureOverlayView.pixelsPerMm = 0f
+            binding.calibrationStatusText.text = "Not calibrated at this zoom"
+        }
     }
 
     private fun startCamera() {
@@ -114,6 +208,7 @@ class MainActivity : AppCompatActivity() {
                 startContinuousAutofocus()
                 setupTapToFocus()
                 detectTorchCapabilities()
+                loadCalibrationForCurrentZoom()
             } catch (exc: Exception) {
                 Toast.makeText(this, "Camera init failed: ${exc.message}", Toast.LENGTH_LONG).show()
             }

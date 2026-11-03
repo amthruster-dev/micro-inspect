@@ -23,6 +23,30 @@
         app:layout_constraintStart_toStartOf="@id/previewView"
         app:layout_constraintEnd_toEndOf="@id/previewView" />
 
+    <com.microinspect.app.MeasureOverlayView
+        android:id="@+id/measureOverlayView"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintTop_toTopOf="@id/previewView"
+        app:layout_constraintBottom_toBottomOf="@id/previewView"
+        app:layout_constraintStart_toStartOf="@id/previewView"
+        app:layout_constraintEnd_toEndOf="@id/previewView" />
+
+    <TextView
+        android:id="@+id/calibrationBanner"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="Tap two points on a known-length object"
+        android:textColor="@color/black"
+        android:textSize="14sp"
+        android:gravity="center"
+        android:background="#FFEB3B"
+        android:paddingVertical="8dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="@id/previewView"
+        app:layout_constraintStart_toStartOf="@id/previewView"
+        app:layout_constraintEnd_toEndOf="@id/previewView" />
+
     <TextView
         android:id="@+id/statusText"
         android:layout_width="wrap_content"
@@ -85,48 +109,69 @@
                 android:progress="100" />
         </LinearLayout>
 
+        <TextView
+            android:id="@+id/calibrationStatusText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Not calibrated"
+            android:textColor="@color/white"
+            android:textSize="12sp"
+            android:paddingTop="4dp" />
+
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:paddingTop="8dp"
-            android:weightSum="3">
+            android:weightSum="4">
 
             <Button
                 android:id="@+id/btnToggleTorch"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginEnd="8dp"
+                android:layout_marginEnd="6dp"
                 android:text="Light"
-                android:textSize="12sp"
+                android:textSize="11sp"
                 android:textColor="@color/black"
                 android:backgroundTint="@color/white"
-                android:paddingHorizontal="4dp" />
+                android:paddingHorizontal="2dp" />
+
+            <Button
+                android:id="@+id/btnMeasure"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="6dp"
+                android:text="Measure"
+                android:textSize="11sp"
+                android:textColor="@color/black"
+                android:backgroundTint="#FFEB3B"
+                android:paddingHorizontal="2dp" />
 
             <Button
                 android:id="@+id/btnCapture"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
+                android:layout_marginEnd="6dp"
                 android:textColor="@color/black"
                 android:backgroundTint="@color/accent"
                 android:text="Capture"
-                android:textSize="12sp"
-                android:paddingHorizontal="4dp" />
+                android:textSize="11sp"
+                android:paddingHorizontal="2dp" />
 
             <Button
                 android:id="@+id/btnGallery"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginStart="8dp"
                 android:text="Saved"
-                android:textSize="12sp"
+                android:textSize="11sp"
                 android:textColor="@color/black"
                 android:backgroundTint="@color/white"
-                android:paddingHorizontal="4dp" />
+                android:paddingHorizontal="2dp" />
         </LinearLayout>
     </LinearLayout>
 
