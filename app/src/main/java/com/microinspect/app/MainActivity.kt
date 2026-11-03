@@ -492,28 +492,41 @@ class MainActivity : AppCompatActivity() {
         // Digital/electronic stabilization of the preview+video pipeline.
         // Only used when OIS isn't available, since running both at once
         // tends to fight on cheaper sensors.
+        //
+        // CONTROL_VIDEO_STABILIZATION_MODE_ON (classic EIS) is used here
+        // rather than PREVIEW_STABILIZATION: the newer preview-stabilization
+        // mode is a per-session characteristic on many OEM camera stacks
+        // and can silently no-op when only applied through
+        // Camera2CameraControl after the session is already running,
+        // instead of at Preview stream configuration time. Classic EIS,
+        // applied as a per-request control, is far more reliably honored
+        // this way.
         if (!supportsOpticalStabilization && supportsVideoStabilization) {
-            if (stabilizationEnabled) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    builder.setCaptureRequestOption(
-                        CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
-                        CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_PREVIEW_STABILIZATION
-                    )
+            builder.setCaptureRequestOption(
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
+                if (stabilizationEnabled) {
+                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
                 } else {
-                    builder.setCaptureRequestOption(
-                        CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
-                        CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
-                    )
-                }
-            } else {
-                builder.setCaptureRequestOption(
-                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
                     CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF
-                )
-            }
+                }
+            )
         }
 
-        Camera2CameraControl.from(cam.cameraControl).setCaptureRequestOptions(builder.build())
+        val options = Camera2CameraControl.from(cam.cameraControl)
+        val future = options.setCaptureRequestOptions(builder.build())
+        future.addListener({
+            try {
+                future.get()
+            } catch (e: Exception) {
+                runOnUiThread {
+                    Toast.makeText(
+                        this,
+                        "Stabilization setting wasn't accepted by this camera",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }, ContextCompat.getMainExecutor(this))
     }
 
     /**
@@ -540,11 +553,9 @@ class MainActivity : AppCompatActivity() {
             val videoModes = characteristics.get(
                 CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES
             )
-            supportsVideoStabilization = videoModes?.any {
-                it == CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON ||
-                    (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                        it == CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_PREVIEW_STABILIZATION)
-            } == true
+            supportsVideoStabilization = videoModes?.contains(
+                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
+            ) == true
         } catch (e: Exception) {
             supportsOpticalStabilization = false
             supportsVideoStabilization = false

@@ -153,37 +153,43 @@ class MeasureOverlayView @JvmOverloads constructor(
     }
 
     /**
-     * Draws a horizontal ruler centered in the view, with minor ticks every
-     * 1 mm and labeled major ticks every 5 mm, extending as far as the
-     * current pixels-per-mm calibration allows on screen.
+     * Draws a vertical ruler along the right edge of the view, with minor
+     * ticks every 1 mm and labeled major ticks every 5 mm, using the
+     * current pixels-per-mm calibration. Kept to a narrow strip at the
+     * edge (rather than crossing the middle of the frame) so it doesn't
+     * sit on top of the subject being inspected.
      */
     private fun drawRuledScale(canvas: Canvas) {
+        val baselineX = width - 28f
         val centerY = height / 2f
-        val centerX = width / 2f
 
         val color = if (isCalibrated) calibratedColor else approxColor
         scalePaint.color = color
         labelPaint.color = color
+        labelPaint.textAlign = Paint.Align.RIGHT
 
-        val mmHalfSpan = (width / 2f / pixelsPerMm)
+        val mmHalfSpan = (height / 2f / pixelsPerMm)
         val maxMm = mmHalfSpan.toInt()
 
         // Baseline
-        canvas.drawLine(0f, centerY, width.toFloat(), centerY, scalePaint)
+        canvas.drawLine(baselineX, 0f, baselineX, height.toFloat(), scalePaint)
 
         for (mm in -maxMm..maxMm) {
-            val x = centerX + mm * pixelsPerMm
+            val y = centerY + mm * pixelsPerMm
             val isMajor = mm % 5 == 0
-            val tickHeight = if (isMajor) 28f else 14f
-            canvas.drawLine(x, centerY - tickHeight, x, centerY + tickHeight, scalePaint)
+            val tickLength = if (isMajor) 26f else 12f
+            canvas.drawLine(baselineX - tickLength, y, baselineX, y, scalePaint)
 
             if (isMajor) {
-                canvas.drawText(mm.toString(), x, centerY - tickHeight - 10f, labelPaint)
+                canvas.drawText(mm.toString(), baselineX - tickLength - 8f, y + 10f, labelPaint)
             }
         }
 
         if (!isCalibrated) {
-            canvas.drawText("APPROX — tap Measure to calibrate", 20f, centerY + 56f, approxBadgePaint)
+            canvas.save()
+            canvas.rotate(-90f, baselineX - 70f, height - 40f)
+            canvas.drawText("APPROX — tap Measure", baselineX - 70f, height - 40f, approxBadgePaint)
+            canvas.restore()
         }
     }
 }
