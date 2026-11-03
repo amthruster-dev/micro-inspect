@@ -35,6 +35,18 @@ class MeasureOverlayView @JvmOverloads constructor(
             invalidate()
         }
 
+    /**
+     * True once the user has calibrated against a known-length object at
+     * the current zoom. False means [pixelsPerMm] is only a rough default
+     * estimate, so the ruler is drawn in a different color and labeled
+     * "approx" to avoid being mistaken for a real measurement.
+     */
+    var isCalibrated: Boolean = false
+        set(value) {
+            field = value
+            invalidate()
+        }
+
     var calibrationMode: Boolean = false
         set(value) {
             field = value
@@ -50,17 +62,27 @@ class MeasureOverlayView @JvmOverloads constructor(
     private var pointA: PointF? = null
     private var pointB: PointF? = null
 
+    private val calibratedColor = Color.parseColor("#00E676")
+    private val approxColor = Color.parseColor("#FFA726")
+
     private val scalePaint = Paint().apply {
-        color = Color.parseColor("#00E676")
+        color = calibratedColor
         strokeWidth = 3f
         isAntiAlias = true
     }
 
     private val labelPaint = Paint().apply {
-        color = Color.parseColor("#00E676")
+        color = calibratedColor
         textSize = 28f
         isAntiAlias = true
         textAlign = Paint.Align.CENTER
+    }
+
+    private val approxBadgePaint = Paint().apply {
+        color = approxColor
+        textSize = 24f
+        isAntiAlias = true
+        textAlign = Paint.Align.LEFT
     }
 
     private val calLinePaint = Paint().apply {
@@ -139,6 +161,10 @@ class MeasureOverlayView @JvmOverloads constructor(
         val centerY = height / 2f
         val centerX = width / 2f
 
+        val color = if (isCalibrated) calibratedColor else approxColor
+        scalePaint.color = color
+        labelPaint.color = color
+
         val mmHalfSpan = (width / 2f / pixelsPerMm)
         val maxMm = mmHalfSpan.toInt()
 
@@ -154,6 +180,10 @@ class MeasureOverlayView @JvmOverloads constructor(
             if (isMajor) {
                 canvas.drawText(mm.toString(), x, centerY - tickHeight - 10f, labelPaint)
             }
+        }
+
+        if (!isCalibrated) {
+            canvas.drawText("APPROX — tap Measure to calibrate", 20f, centerY + 56f, approxBadgePaint)
         }
     }
 }

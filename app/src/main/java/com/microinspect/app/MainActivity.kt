@@ -183,6 +183,7 @@ class MainActivity : AppCompatActivity() {
     private fun finishCalibration(pxPerMm: Float) {
         binding.measureOverlayView.calibrationMode = false
         binding.measureOverlayView.pixelsPerMm = pxPerMm
+        binding.measureOverlayView.isCalibrated = true
         binding.calibrationBanner.visibility = android.view.View.GONE
         binding.calibrationStatusText.text = "Calibrated: %.1f px/mm".format(pxPerMm)
         Toast.makeText(this, "Calibrated. Ruled scale now shows real mm.", Toast.LENGTH_SHORT).show()
@@ -202,19 +203,36 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Calibration is zoom-dependent (pixels-per-mm changes with zoom), so
-     * each zoom level keeps its own saved value. Switching zoom without a
-     * saved calibration for that level clears the ruled overlay and shows
-     * "Not calibrated" until the user recalibrates there.
+     * each zoom level keeps its own saved value. When there's no saved
+     * calibration for the current zoom, the ruled scale is still shown
+     * immediately using a rough density-based estimate so the screen never
+     * looks "empty" — it's drawn in orange and labeled APPROX until the
+     * user calibrates against a known object at this zoom.
      */
     private fun loadCalibrationForCurrentZoom() {
         val saved = calibrationPrefs.getFloat(calibrationKeyForZoom(), -1f)
         if (saved > 0f) {
             binding.measureOverlayView.pixelsPerMm = saved
+            binding.measureOverlayView.isCalibrated = true
             binding.calibrationStatusText.text = "Calibrated: %.1f px/mm".format(saved)
         } else {
-            binding.measureOverlayView.pixelsPerMm = 0f
-            binding.calibrationStatusText.text = "Not calibrated at this zoom"
+            binding.measureOverlayView.pixelsPerMm = estimateDefaultPixelsPerMm()
+            binding.measureOverlayView.isCalibrated = false
+            binding.calibrationStatusText.text = "Not calibrated at this zoom (showing approx scale)"
         }
+    }
+
+    /**
+     * A rough starting px/mm so the ruler overlay has something plausible
+     * to show before the user calibrates. Based on screen density only —
+     * it assumes a roughly life-size subject in frame and gets less
+     * accurate the more the lens is zoomed in, which is exactly why it's
+     * drawn as an approximation rather than a real reading.
+     */
+    private fun estimateDefaultPixelsPerMm(): Float {
+        val baseDotsPerMm = resources.displayMetrics.xdpi / 25.4f
+        val zoomMultiplier = 1f + (currentZoomPercent / 100f) * 3f
+        return baseDotsPerMm * zoomMultiplier
     }
 
     private fun startCamera() {
