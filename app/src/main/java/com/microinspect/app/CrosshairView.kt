@@ -8,13 +8,38 @@ import android.util.AttributeSet
 import android.view.View
 
 /**
- * Simple center crosshair overlay to help align the sensor on a defect
- * before capture. Purely visual — draws over the camera preview.
+ * Center crosshair overlay. Normally hidden (alpha 0) — it's flashed
+ * briefly via [flashOnPeakFocus] whenever the sharpness meter hits a new
+ * peak, as a "focus confirmed" cue, then fades back out rather than
+ * staying on screen all the time.
  */
 class CrosshairView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null
 ) : View(context, attrs) {
+
+    init {
+        alpha = 0f
+    }
+
+    private var fadeOutRunnable: Runnable? = null
+
+    /**
+     * Shows the crosshair at full opacity, holds briefly, then fades it
+     * back out. Calling this again while a flash is already in progress
+     * restarts the hold/fade timing rather than stacking animations.
+     */
+    fun flashOnPeakFocus() {
+        fadeOutRunnable?.let { removeCallbacks(it) }
+        animate().cancel()
+        alpha = 1f
+
+        val runnable = Runnable {
+            animate().alpha(0f).setDuration(400).start()
+        }
+        fadeOutRunnable = runnable
+        postDelayed(runnable, 500)
+    }
 
     private val linePaint = Paint().apply {
         color = Color.parseColor("#00E676")

@@ -621,6 +621,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private var runningMaxVariance = 1.0
+    private var lastPeakFlashTime = 0L
 
     private fun computeSharpnessScore(imageProxy: ImageProxy): Int {
         if (imageProxy.format != ImageFormat.YUV_420_888) return 0
@@ -676,10 +677,30 @@ class MainActivity : AppCompatActivity() {
         val mean = sum / count
         val variance = (sumSq / count) - (mean * mean)
 
-        // Track a running max so the meter is relative to what this scene
-        // has actually achieved (an absolute scale would mean nearly
-        // everything reads near-zero on low-texture surfaces).
-        runningMaxVariance = max(runningMaxVariance, variance)
+        // A meaningful new peak (not just noise re-hitting the ceiling):
+        // require a modest margin over the previous best before treating
+        // it as "sharper than we've seen", and rate-limit the flash so it
+        // reads as a distinct confirmation rather than a strobe.
+        val isNewPeak = variance > runningMaxVariance * 1.05
+        runningMaxVariance = if (isNewPeak) {
+            variance
+        } else {
+            // Slow decay so the "best seen" ceiling tracks the current
+            // scene rather than an all-time high from a sharper subject
+            // or better lighting earlier in the session — otherwise a new,
+            // genuinely in-focus scene could permanently stop flashing
+            // because it never beats an unrelated old peak.
+            max(variance, runningMaxVariance * 0.995)
+        }
+
+        if (isNewPeak) {
+            val now = System.currentTimeMillis()
+            if (now - lastPeakFlashTime > 700) {
+                lastPeakFlashTime = now
+                runOnUiThread { binding.crosshairView.flashOnPeakFocus() }
+            }
+        }
+
         val normalized = (variance / runningMaxVariance) * 100.0
         return normalized.coerceIn(0.0, 100.0).toInt()
     }
