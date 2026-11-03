@@ -121,19 +121,82 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingTop="6dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Sharpness"
+                android:textColor="@color/white"
+                android:textSize="12sp" />
+
+            <ProgressBar
+                android:id="@+id/sharpnessMeter"
+                style="?android:attr/progressBarStyleHorizontal"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:max="100"
+                android:progress="0"
+                android:progressTint="@color/accent" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:id="@+id/manualFocusRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:visibility="gone">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Focus"
+                android:textColor="@color/white"
+                android:textSize="12sp" />
+
+            <SeekBar
+                android:id="@+id/manualFocusSeekBar"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginStart="8dp"
+                android:max="100"
+                android:progress="0" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:paddingTop="8dp"
-            android:weightSum="4">
+            android:paddingTop="6dp"
+            android:weightSum="5">
+
+            <Button
+                android:id="@+id/btnToggleAf"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:layout_marginEnd="4dp"
+                android:text="AF: On"
+                android:textSize="10sp"
+                android:textColor="@color/black"
+                android:backgroundTint="@color/accent"
+                android:paddingHorizontal="2dp" />
 
             <Button
                 android:id="@+id/btnToggleTorch"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginEnd="6dp"
+                android:layout_marginEnd="4dp"
                 android:text="Light"
-                android:textSize="11sp"
+                android:textSize="10sp"
                 android:textColor="@color/black"
                 android:backgroundTint="@color/white"
                 android:paddingHorizontal="2dp" />
@@ -143,9 +206,9 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginEnd="6dp"
+                android:layout_marginEnd="4dp"
                 android:text="Measure"
-                android:textSize="11sp"
+                android:textSize="10sp"
                 android:textColor="@color/black"
                 android:backgroundTint="#FFEB3B"
                 android:paddingHorizontal="2dp" />
@@ -155,11 +218,11 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:layout_marginEnd="6dp"
+                android:layout_marginEnd="4dp"
                 android:textColor="@color/black"
                 android:backgroundTint="@color/accent"
                 android:text="Capture"
-                android:textSize="11sp"
+                android:textSize="10sp"
                 android:paddingHorizontal="2dp" />
 
             <Button
@@ -168,7 +231,7 @@
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
                 android:text="Saved"
-                android:textSize="11sp"
+                android:textSize="10sp"
                 android:textColor="@color/black"
                 android:backgroundTint="@color/white"
                 android:paddingHorizontal="2dp" />

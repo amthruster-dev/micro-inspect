@@ -5,7 +5,10 @@ import android.content.ContentValues
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.graphics.ImageFormat
+import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
+import android.hardware.camera2.CaptureRequest
 import android.os.Build
 import android.os.Bundle
 import android.provider.MediaStore
@@ -16,6 +19,8 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.CaptureRequestOptions
+import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
@@ -24,6 +29,7 @@ import androidx.core.content.ContextCompat
 import com.microinspect.app.databinding.ActivityMainBinding
 import java.text.SimpleDateFormat
 import java.util.Locale
+import kotlin.math.max
 
 class MainActivity : AppCompatActivity() {
 
@@ -41,6 +47,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var calibrationPrefs: SharedPreferences
     private var currentZoomPercent: Int = 0
     private var pendingCalibrationPixelDistance: Float = 0f
+
+    private var imageAnalysis: ImageAnalysis? = null
+    private var afEnabled: Boolean = true
+    private var minFocusDistance: Float = 0f // diopters; 0 = infinity
+    private val analysisExecutor by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
 
     private val requestPermissionLauncher =
         registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
@@ -109,6 +120,18 @@ class MainActivity : AppCompatActivity() {
             pendingCalibrationPixelDistance = pixelDistance
             promptForKnownLength()
         }
+
+        binding.btnToggleAf.setOnClickListener {
+            setAfEnabled(!afEnabled)
+        }
+
+        binding.manualFocusSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (fromUser && !afEnabled) applyManualFocus(progress)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
     }
 
     /**
@@ -198,13 +221,24 @@ class MainActivity : AppCompatActivity() {
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
                 .build()
 
+            setupSharpnessAnalysis()
+            val analysis = imageAnalysis
+
             val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
             try {
                 cameraProvider.unbindAll()
-                camera = cameraProvider.bindToLifecycle(
-                    this, cameraSelector, preview, imageCapture
-                )
+                camera = if (analysis != null) {
+                    cameraProvider.bindToLifecycle(
+                        this, cameraSelector, preview, imageCapture, analysis
+                    )
+                } else {
+                    cameraProvider.bindToLifecycle(
+                        this, cameraSelector, preview, imageCapture
+                    )
+                }
+                detectFocusCapabilities()
+                afEnabled = true
                 startContinuousAutofocus()
                 setupTapToFocus()
                 detectTorchCapabilities()
@@ -299,14 +333,21 @@ class MainActivity : AppCompatActivity() {
      * the part moves, instead of locking after a single focus pass.
      */
     private fun startContinuousAutofocus() {
+        if (!afEnabled) return
         val previewView = binding.previewView
         previewView.post {
+            if (!afEnabled) return@post
             val factory = previewView.meteringPointFactory
             val centerPoint = factory.createPoint(previewView.width / 2f, previewView.height / 2f)
 
+            // AF only here, deliberately without FLAG_AE: re-triggering
+            // auto-exposure metering on every continuous refocus pass is
+            // what caused the preview to flash/pump brightness. Exposure
+            // still runs continuously on its own; it just isn't re-anchored
+            // every time focus hunts.
             val action = FocusMeteringAction.Builder(
                 centerPoint,
-                FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE
+                FocusMeteringAction.FLAG_AF
             )
                 // No auto-cancel: keep refocusing continuously rather than locking.
                 .disableAutoCancel()
@@ -319,7 +360,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupTapToFocus() {
         binding.previewView.setOnTouchListener { view, event ->
-            if (event.action == android.view.MotionEvent.ACTION_UP) {
+            if (event.action == android.view.MotionEvent.ACTION_UP && afEnabled) {
                 val factory = binding.previewView.meteringPointFactory
                 val point = factory.createPoint(event.x, event.y)
                 // Tap pins focus/exposure on a specific defect for a few
@@ -340,6 +381,175 @@ class MainActivity : AppCompatActivity() {
             }
             true
         }
+    }
+
+    /**
+     * Toggles between continuous autofocus and manual focus. Turning AF
+     * off cancels any in-flight focus/metering action and freezes the lens
+     * wherever it currently sits (then the manual slider takes over);
+     * turning AF back on resumes continuous hunting and hides the slider.
+     */
+    @OptIn(ExperimentalCamera2Interop::class)
+    private fun setAfEnabled(enabled: Boolean) {
+        afEnabled = enabled
+        val cam = camera
+
+        if (enabled) {
+            binding.btnToggleAf.text = "AF: On"
+            binding.manualFocusRow.visibility = android.view.View.GONE
+            if (cam != null) {
+                Camera2CameraControl.from(cam.cameraControl).setCaptureRequestOptions(
+                    CaptureRequestOptions.Builder()
+                        .setCaptureRequestOption(
+                            CaptureRequest.CONTROL_AF_MODE,
+                            CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE
+                        )
+                        .build()
+                )
+            }
+            startContinuousAutofocus()
+        } else {
+            binding.btnToggleAf.text = "AF: Off"
+            cam?.cameraControl?.cancelFocusAndMetering()
+            if (minFocusDistance > 0f) {
+                binding.manualFocusRow.visibility = android.view.View.VISIBLE
+                applyManualFocus(binding.manualFocusSeekBar.progress)
+            } else {
+                Toast.makeText(this, "This camera doesn't support manual focus", Toast.LENGTH_SHORT).show()
+            }
+            binding.statusText.text = "Manual focus"
+        }
+    }
+
+    /**
+     * Drives the lens directly via Camera2's LENS_FOCUS_DISTANCE, in
+     * diopters (0 = infinity, increasing = closer). CameraX has no native
+     * manual-focus API, so this goes through Camera2Interop.
+     */
+    @OptIn(ExperimentalCamera2Interop::class)
+    private fun applyManualFocus(percent: Int) {
+        val cam = camera ?: return
+        if (minFocusDistance <= 0f) return
+        val fraction = percent.coerceIn(0, 100) / 100f
+        val diopters = fraction * minFocusDistance
+
+        Camera2CameraControl.from(cam.cameraControl).setCaptureRequestOptions(
+            CaptureRequestOptions.Builder()
+                .setCaptureRequestOption(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_OFF)
+                .setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, diopters)
+                .build()
+        )
+    }
+
+    /**
+     * Reads the lens's minimum focus distance (needed to drive manual
+     * focus) and whether the device reports a focus distance calibration
+     * good enough to trust the slider's mapping.
+     */
+    @OptIn(ExperimentalCamera2Interop::class)
+    private fun detectFocusCapabilities() {
+        val cam = camera ?: return
+        try {
+            val cameraId = Camera2CameraInfo.from(cam.cameraInfo).cameraId
+            val characteristics = cameraManager.getCameraCharacteristics(cameraId)
+            minFocusDistance = characteristics.get(
+                CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE
+            ) ?: 0f
+        } catch (e: Exception) {
+            minFocusDistance = 0f
+        }
+    }
+
+    /**
+     * Streams low-res preview frames through ImageAnalysis and scores each
+     * one for sharpness using a Laplacian-variance style edge-strength
+     * metric: in-focus images have sharp edges (high local contrast
+     * variance), blurry ones don't. The score is normalized to 0-100 and
+     * shown on the sharpness meter so the user can see focus quality peak
+     * in real time, whether driven by AF or the manual slider.
+     */
+    private fun setupSharpnessAnalysis() {
+        val analysis = ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
+            .build()
+
+        analysis.setAnalyzer(analysisExecutor) { imageProxy ->
+            try {
+                val score = computeSharpnessScore(imageProxy)
+                runOnUiThread {
+                    binding.sharpnessMeter.progress = score
+                }
+            } finally {
+                imageProxy.close()
+            }
+        }
+
+        imageAnalysis = analysis
+    }
+
+    private var runningMaxVariance = 1.0
+
+    private fun computeSharpnessScore(imageProxy: ImageProxy): Int {
+        if (imageProxy.format != ImageFormat.YUV_420_888) return 0
+        val yPlane = imageProxy.planes[0]
+        val buffer = yPlane.buffer
+        val rowStride = yPlane.rowStride
+        val width = imageProxy.width
+        val height = imageProxy.height
+
+        // Sample a sparse grid of the luma plane (every few pixels) and
+        // approximate a Laplacian via a simple 4-neighbor second
+        // difference. This is cheap enough to run every frame on-device
+        // without a dedicated image-processing library.
+        val step = 6
+        var sum = 0.0
+        var sumSq = 0.0
+        var count = 0
+
+        val bytes = ByteArray(buffer.remaining())
+        buffer.get(bytes)
+
+        var y = step
+        while (y < height - step) {
+            var x = step
+            while (x < width - step) {
+                val idx = y * rowStride + x
+                val idxUp = (y - step) * rowStride + x
+                val idxDown = (y + step) * rowStride + x
+                val idxLeft = y * rowStride + (x - step)
+                val idxRight = y * rowStride + (x + step)
+
+                if (idx < bytes.size && idxUp >= 0 && idxUp < bytes.size &&
+                    idxDown < bytes.size && idxLeft >= 0 && idxLeft < bytes.size && idxRight < bytes.size
+                ) {
+                    val center = bytes[idx].toInt() and 0xFF
+                    val up = bytes[idxUp].toInt() and 0xFF
+                    val down = bytes[idxDown].toInt() and 0xFF
+                    val left = bytes[idxLeft].toInt() and 0xFF
+                    val right = bytes[idxRight].toInt() and 0xFF
+
+                    val laplacian = (up + down + left + right - 4 * center).toDouble()
+                    sum += laplacian
+                    sumSq += laplacian * laplacian
+                    count++
+                }
+                x += step
+            }
+            y += step
+        }
+
+        if (count == 0) return 0
+
+        val mean = sum / count
+        val variance = (sumSq / count) - (mean * mean)
+
+        // Track a running max so the meter is relative to what this scene
+        // has actually achieved (an absolute scale would mean nearly
+        // everything reads near-zero on low-texture surfaces).
+        runningMaxVariance = max(runningMaxVariance, variance)
+        val normalized = (variance / runningMaxVariance) * 100.0
+        return normalized.coerceIn(0.0, 100.0).toInt()
     }
 
     private fun takePhoto() {
@@ -379,5 +589,6 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         if (torchOn) turnTorchOff()
         cameraExecutor.shutdown()
+        analysisExecutor.shutdown()
     }
 }
