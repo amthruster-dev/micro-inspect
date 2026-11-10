@@ -175,20 +175,7 @@
             android:gravity="center_vertical"
             android:orientation="horizontal"
             android:paddingTop="6dp"
-            android:weightSum="6">
-
-            <Button
-                android:id="@+id/btnToggleStabilization"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:layout_marginEnd="4dp"
-                android:text="Stab: On"
-                android:textSize="10sp"
-                android:textColor="@color/black"
-                android:backgroundTint="#29B6F6"
-                android:paddingHorizontal="2dp"
-                android:visibility="gone" />
+            android:weightSum="5">
 
             <Button
                 android:id="@+id/btnToggleAf"

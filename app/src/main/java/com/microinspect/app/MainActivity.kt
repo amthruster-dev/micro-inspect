@@ -54,9 +54,6 @@ class MainActivity : AppCompatActivity() {
     private var manualFocusDiopters: Float = 0f
     private val analysisExecutor by lazy { java.util.concurrent.Executors.newSingleThreadExecutor() }
 
-    private var supportsOpticalStabilization: Boolean = false
-    private var supportsVideoStabilization: Boolean = false
-    private var stabilizationEnabled: Boolean = true
 
     private val requestPermissionLauncher =
         registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { granted ->
@@ -128,10 +125,6 @@ class MainActivity : AppCompatActivity() {
 
         binding.btnToggleAf.setOnClickListener {
             setAfEnabled(!afEnabled)
-        }
-
-        binding.btnToggleStabilization.setOnClickListener {
-            setStabilizationEnabled(!stabilizationEnabled)
         }
 
         binding.manualFocusSeekBar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -265,9 +258,7 @@ class MainActivity : AppCompatActivity() {
                     )
                 }
                 detectFocusCapabilities()
-                detectStabilizationCapabilities()
                 afEnabled = true
-                stabilizationEnabled = true
                 applyCaptureRequestOptions()
                 startContinuousAutofocus()
                 setupTapToFocus()
@@ -457,10 +448,9 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Builds and applies the full Camera2 capture request options from
-     * current state in one place. AF mode/manual focus and stabilization
-     * are independent Camera2 settings that both go through the same
-     * Camera2CameraControl, so setting one via a fresh builder would wipe
-     * out the other; this always composes the complete set.
+     * current state in one place. AF mode and manual focus both go
+     * through the same Camera2CameraControl, so setting one via a fresh
+     * builder would wipe out the other; this always composes the full set.
      */
     @OptIn(ExperimentalCamera2Interop::class)
     private fun applyCaptureRequestOptions() {
@@ -477,111 +467,7 @@ class MainActivity : AppCompatActivity() {
             builder.setCaptureRequestOption(CaptureRequest.LENS_FOCUS_DISTANCE, manualFocusDiopters)
         }
 
-        if (stabilizationEnabled && supportsOpticalStabilization) {
-            builder.setCaptureRequestOption(
-                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
-                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON
-            )
-        } else if (supportsOpticalStabilization) {
-            builder.setCaptureRequestOption(
-                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE,
-                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_OFF
-            )
-        }
-
-        // Digital/electronic stabilization of the preview+video pipeline.
-        // Only used when OIS isn't available, since running both at once
-        // tends to fight on cheaper sensors.
-        //
-        // CONTROL_VIDEO_STABILIZATION_MODE_ON (classic EIS) is used here
-        // rather than PREVIEW_STABILIZATION: the newer preview-stabilization
-        // mode is a per-session characteristic on many OEM camera stacks
-        // and can silently no-op when only applied through
-        // Camera2CameraControl after the session is already running,
-        // instead of at Preview stream configuration time. Classic EIS,
-        // applied as a per-request control, is far more reliably honored
-        // this way.
-        if (!supportsOpticalStabilization && supportsVideoStabilization) {
-            builder.setCaptureRequestOption(
-                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
-                if (stabilizationEnabled) {
-                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
-                } else {
-                    CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF
-                }
-            )
-        }
-
-        val options = Camera2CameraControl.from(cam.cameraControl)
-        val future = options.setCaptureRequestOptions(builder.build())
-        future.addListener({
-            try {
-                future.get()
-            } catch (e: Exception) {
-                runOnUiThread {
-                    Toast.makeText(
-                        this,
-                        "Stabilization setting wasn't accepted by this camera",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                }
-            }
-        }, ContextCompat.getMainExecutor(this))
-    }
-
-    /**
-     * Checks what stabilization this camera supports. OIS (hardware,
-     * moves the lens element) is preferred when present; otherwise falls
-     * back to Android's video/preview electronic stabilization. Handheld
-     * macro shake is heavily amplified at close focus distances and high
-     * zoom, so this matters more here than on a typical wide shot.
-     */
-    @OptIn(ExperimentalCamera2Interop::class)
-    private fun detectStabilizationCapabilities() {
-        val cam = camera ?: return
-        try {
-            val cameraId = Camera2CameraInfo.from(cam.cameraInfo).cameraId
-            val characteristics = cameraManager.getCameraCharacteristics(cameraId)
-
-            val oisModes = characteristics.get(
-                CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION
-            )
-            supportsOpticalStabilization = oisModes?.contains(
-                CaptureRequest.LENS_OPTICAL_STABILIZATION_MODE_ON
-            ) == true
-
-            val videoModes = characteristics.get(
-                CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES
-            )
-            supportsVideoStabilization = videoModes?.contains(
-                CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_ON
-            ) == true
-        } catch (e: Exception) {
-            supportsOpticalStabilization = false
-            supportsVideoStabilization = false
-        }
-
-        binding.btnToggleStabilization.visibility =
-            if (supportsOpticalStabilization || supportsVideoStabilization) android.view.View.VISIBLE
-            else android.view.View.GONE
-
-        updateStabilizationLabel()
-    }
-
-    private fun updateStabilizationLabel() {
-        val kind = when {
-            supportsOpticalStabilization -> "OIS"
-            supportsVideoStabilization -> "EIS"
-            else -> ""
-        }
-        binding.btnToggleStabilization.text =
-            if (stabilizationEnabled) "Stab: $kind" else "Stab: Off"
-    }
-
-    private fun setStabilizationEnabled(enabled: Boolean) {
-        stabilizationEnabled = enabled
-        updateStabilizationLabel()
-        applyCaptureRequestOptions()
+        Camera2CameraControl.from(cam.cameraControl).setCaptureRequestOptions(builder.build())
     }
 
     /**
