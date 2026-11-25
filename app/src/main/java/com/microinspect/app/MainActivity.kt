@@ -67,6 +67,11 @@ class MainActivity : AppCompatActivity() {
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // Inspection sessions involve long stretches of just looking at the
+        // preview without touching the screen, so keep it from sleeping
+        // while this screen is in the foreground.
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+
         cameraExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         calibrationPrefs = getSharedPreferences("measure_calibration", Context.MODE_PRIVATE)
